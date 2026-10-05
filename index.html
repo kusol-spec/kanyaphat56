@@ -257,18 +257,17 @@
 
             <!-- Admin Dashboard Content -->
             <div id="adminDashboard" class="hidden space-y-6">
-                <!-- Missing locations today -->
+                <!-- Recent reports (read-only) -->
                 <div class="glass-pink p-6 sm:p-8 rounded-3xl cute-shadow">
-                    <div class="flex justify-between items-center mb-5">
+                    <div class="flex justify-between items-center mb-4">
                         <div>
-                            <h2 class="text-xl font-bold text-slate-800 flex items-center gap-2">📌 จุดที่ยังไม่ส่งรายงานวันนี้</h2>
-                            <p class="text-xs text-rose-400 mt-1">ใช้ติดตามว่าจุดประจำเวรไหนยังไม่มีใครส่งรายงานของวันนี้</p>
+                            <h2 class="text-xl font-bold text-slate-800 flex items-center gap-2">📋 รายงานที่ส่งเข้ามา</h2>
+                            <p id="reportSummary" class="text-xs text-rose-400 mt-1">กำลังโหลด...</p>
                         </div>
                         <button onclick="loadAdminData()" class="text-xs bg-rose-100 hover:bg-rose-200 text-rose-700 px-3 py-1.5 rounded-xl font-medium">🔄 อัปเดต</button>
                     </div>
-                    <div id="missingSummary" class="text-sm font-bold text-rose-600 mb-3"></div>
-                    <div id="missingLocationList" class="flex flex-wrap gap-2">
-                        <p class="text-sm text-rose-300 py-2">กำลังโหลด...</p>
+                    <div id="recentReportsList" class="space-y-2 max-h-96 overflow-y-auto pr-1">
+                        <p class="text-sm text-rose-300 text-center py-4">กำลังโหลด...</p>
                     </div>
                 </div>
 
@@ -641,7 +640,14 @@
 
         async function loadStudentReports() {
             const list = document.getElementById('studentReportsList');
-            const res = await apiCall('getStudentReports');
+            const res = await apiCall('getStudentReports', {}, 60000, true);
+            if (!res.success || !Array.isArray(res.reports)) {
+                list.innerHTML = `<div class="text-center py-6 space-y-2">
+                    <p class="text-sm text-rose-400">โหลดประวัติไม่สำเร็จ${res.error ? ' (' + res.error + ')' : ''}</p>
+                    <button onclick="loadStudentReports()" class="text-xs bg-rose-100 hover:bg-rose-200 text-rose-700 px-4 py-2 rounded-xl font-bold">🔄 ลองใหม่</button>
+                </div>`;
+                return;
+            }
             if (res.success && res.reports) {
                 if (res.reports.length === 0) {
                     list.innerHTML = '<p class="text-sm text-rose-300 text-center py-6">ยังไม่มีประวัติการส่งรายงานค่ะ</p>';
@@ -777,32 +783,50 @@
             }
         }
 
+        // เก็บ id รายงานที่ตรวจแล้วไว้ในเครื่อง กันกลับมาโชว์ซ้ำ แม้ฝั่งเซิร์ฟเวอร์ยังไม่อัปเดตสถานะ
+        function getGradedIds() {
+            try { return new Set(JSON.parse(localStorage.getItem('graded_ids') || '[]')); }
+            catch (e) { return new Set(); }
+        }
+        function addGradedId(id) {
+            const set = getGradedIds();
+            set.add(String(id));
+            try { localStorage.setItem('graded_ids', JSON.stringify([...set].slice(-500))); } catch (e) {}
+        }
+
         async function loadPendingReports() {
             const list = document.getElementById('pendingReportsList');
-            const res = await apiCall('getPendingReports');
-            if (res.success && res.reports) {
-                if (res.reports.length === 0) {
-                    list.innerHTML = '<p class="text-sm text-rose-400 text-center py-6">ไม่มีรายงานรอการตรวจแล้วค่ะ 👍🌸</p>';
-                    return;
-                }
-                list.innerHTML = res.reports.map(r => `
-                    <div class="p-5 bg-white/80 rounded-2xl border border-rose-200/60 space-y-4 shadow-sm">
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <h4 class="font-bold text-slate-800 text-base">${r.studentName} <span class="text-rose-500 text-sm font-semibold">(📍 ${r.location})</span></h4>
-                                <p class="text-xs text-slate-400 mt-1">${r.timestamp} • ${r.status}</p>
-                                ${r.absentDetails !== '-' ? `<p class="text-xs text-rose-500 font-medium mt-1">ขาด: ${r.absentDetails}</p>` : ''}
-                            </div>
-                            ${r.photoUrl ? `<a href="${r.photoUrl}" target="_blank" class="text-xs bg-rose-100 text-rose-600 px-3 py-1.5 rounded-xl font-bold hover:bg-rose-200 transition">🖼 ดูรูปถ่าย</a>` : ''}
-                        </div>
-                        <div class="flex flex-col sm:flex-row gap-2 pt-3 border-t border-rose-100">
-                            <input type="number" id="score_${r.id}" max="10" min="0" placeholder="คะแนน (0-10)" class="sm:w-32 p-2.5 bg-rose-50/30 border border-rose-200 rounded-xl text-sm focus:outline-none">
-                            <input type="text" id="feedback_${r.id}" placeholder="ความคิดเห็น..." class="flex-1 p-2.5 bg-rose-50/30 border border-rose-200 rounded-xl text-sm focus:outline-none">
-                            <button onclick="submitGrade('${r.id}')" class="pink-btn-gradient text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md hover:opacity-95">ให้คะแนน</button>
-                        </div>
-                    </div>
-                `).join('');
+            const res = await apiCall('getPendingReports', {}, 60000, true);
+            if (!res.success || !Array.isArray(res.reports)) {
+                list.innerHTML = `<div class="text-center py-6 space-y-2">
+                    <p class="text-sm text-rose-400">โหลดรายงานไม่สำเร็จ${res.error ? ' (' + res.error + ')' : ''}</p>
+                    <button onclick="loadPendingReports()" class="text-xs bg-rose-100 hover:bg-rose-200 text-rose-700 px-4 py-2 rounded-xl font-bold">🔄 ลองใหม่</button>
+                </div>`;
+                return;
             }
+            const done = getGradedIds();
+            const reports = res.reports.filter(r => !isGraded(r) && !done.has(String(r.id)));
+            if (reports.length === 0) {
+                list.innerHTML = '<p class="text-sm text-rose-400 text-center py-6">ไม่มีรายงานรอการตรวจแล้วค่ะ 👍🌸</p>';
+                return;
+            }
+            list.innerHTML = reports.map(r => `
+                <div id="pending_${r.id}" class="p-5 bg-white/80 rounded-2xl border border-rose-200/60 space-y-4 shadow-sm">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h4 class="font-bold text-slate-800 text-base">${r.studentName} <span class="text-rose-500 text-sm font-semibold">(📍 ${r.location})</span></h4>
+                            <p class="text-xs text-slate-400 mt-1">${r.timestamp} • ${r.status}</p>
+                            ${r.absentDetails && r.absentDetails !== '-' ? `<p class="text-xs text-rose-500 font-medium mt-1">ขาด: ${r.absentDetails}</p>` : ''}
+                        </div>
+                        ${r.photoUrl ? `<a href="${r.photoUrl}" target="_blank" class="text-xs bg-rose-100 text-rose-600 px-3 py-1.5 rounded-xl font-bold hover:bg-rose-200 transition">🖼 ดูรูปถ่าย</a>` : ''}
+                    </div>
+                    <div class="flex flex-col sm:flex-row gap-2 pt-3 border-t border-rose-100">
+                        <input type="number" id="score_${r.id}" max="10" min="0" placeholder="คะแนน (0-10)" class="sm:w-32 p-2.5 bg-rose-50/30 border border-rose-200 rounded-xl text-sm focus:outline-none">
+                        <input type="text" id="feedback_${r.id}" placeholder="ความคิดเห็น..." class="flex-1 p-2.5 bg-rose-50/30 border border-rose-200 rounded-xl text-sm focus:outline-none">
+                        <button onclick="submitGrade('${r.id}')" class="pink-btn-gradient text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md hover:opacity-95">ให้คะแนน</button>
+                    </div>
+                </div>
+            `).join('');
         }
 
         async function submitGrade(id) {
@@ -813,8 +837,14 @@
 
             const res = await apiCall('gradeReport', { id, score, feedback, teacherName: loggedInTeacher });
             if (res.success) {
+                addGradedId(id);
+                const card = document.getElementById(`pending_${id}`);
+                if (card) card.remove();
+                const listEl = document.getElementById('pendingReportsList');
+                if (!listEl.children.length) {
+                    listEl.innerHTML = '<p class="text-sm text-rose-400 text-center py-6">ไม่มีรายงานรอการตรวจแล้วค่ะ 👍🌸</p>';
+                }
                 alert('ให้คะแนนเรียบร้อยค่ะ ✨');
-                loadPendingReports();
                 loadStudentReports();
             } else {
                 alert('บันทึกคะแนนไม่สำเร็จ: ' + (res.error || 'เซิร์ฟเวอร์ไม่ตอบกลับ ลองใหม่อีกครั้งค่ะ'));
@@ -877,63 +907,31 @@
                 `).join('');
 
                 adminReports = res.allReports || [];
-                renderMissingLocations(res.locations || []);
+                renderRecentReports();
                 document.getElementById('exportCount').innerText = `มีรายงานในระบบ ${adminReports.length} รายการ`;
             }
         }
 
-        // ---------- แปลงวันที่จาก timestamp เป็น yyyy-mm-dd (เวลาเครื่อง) ----------
-        function ymd(d) {
-            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        }
-        function parseReportDate(ts) {
-            if (ts instanceof Date) return ymd(ts);
-            const str = String(ts || '').trim();
-            if (!str) return null;
-            let d, m, y, mt;
-
-            // ISO มีเขตเวลา เช่น 2026-10-05T03:00:00.000Z -> แปลงเป็นเวลาท้องถิ่น
-            if (/^\d{4}-\d{2}-\d{2}T.*(Z|[+-]\d{2}:?\d{2})$/.test(str)) {
-                const dt = new Date(str);
-                if (!isNaN(dt)) return ymd(dt);
+        function renderRecentReports() {
+            const box = document.getElementById('recentReportsList');
+            const done = adminReports.filter(isGraded).length;
+            document.getElementById('reportSummary').innerText =
+                `ทั้งหมด ${adminReports.length} รายการ • ตรวจแล้ว ${done} • รอตรวจ ${adminReports.length - done}`;
+            if (!adminReports.length) {
+                box.innerHTML = '<p class="text-sm text-rose-300 text-center py-4">ยังไม่มีรายงานในระบบค่ะ</p>';
+                return;
             }
-            mt = str.match(/(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
-            if (mt) { y = +mt[1]; m = +mt[2]; d = +mt[3]; }
-            else {
-                mt = str.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
-                if (mt) { d = +mt[1]; m = +mt[2]; y = +mt[3]; }
-                else {
-                    const dt = new Date(str);
-                    return isNaN(dt) ? null : ymd(dt);
-                }
-            }
-            if (y > 2400) y -= 543;
-            return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        }
-
-        function normLoc(v) { return String(v || '').replace(/\s+/g, ' ').trim(); }
-
-        function renderMissingLocations(locations) {
-            const today = ymd(new Date());
-            const todayReports = adminReports.filter(r => parseReportDate(r.timestamp) === today);
-            const reported = new Set(todayReports.map(r => normLoc(r.location)));
-            const missing = locations.filter(l => !reported.has(normLoc(l)));
-            const box = document.getElementById('missingLocationList');
-
-            const sample = adminReports[0] ? String(adminReports[0].timestamp) : '-';
-            document.getElementById('missingSummary').innerHTML =
-                `ส่งแล้ว ${locations.length - missing.length} / ${locations.length} จุด ` +
-                `<span class="block text-xs text-slate-400 font-normal mt-1">รายงานวันนี้ ${todayReports.length} รายการ จากทั้งหมด ${adminReports.length} • ตัวอย่างวันที่ในระบบ: ${sample}</span>`;
-
-            if (locations.length === 0) {
-                box.innerHTML = '<p class="text-sm text-rose-300 py-2">ยังไม่มีจุดประจำเวรในระบบ</p>';
-            } else if (missing.length === 0) {
-                box.innerHTML = '<p class="text-sm text-emerald-600 font-bold py-2">ทุกจุดส่งรายงานวันนี้ครบแล้วค่ะ 🎉</p>';
-            } else {
-                box.innerHTML = missing.map(l =>
-                    `<span class="text-sm bg-white border border-rose-200 text-rose-700 font-semibold px-3 py-1.5 rounded-xl shadow-sm">📍 ${l}</span>`
-                ).join('');
-            }
+            box.innerHTML = adminReports.slice(0, 50).map(r => `
+                <div class="flex justify-between items-center gap-3 p-3 bg-white rounded-xl border border-rose-100 text-xs">
+                    <div class="min-w-0">
+                        <div class="font-bold text-slate-800 truncate">${r.studentName} <span class="text-rose-500 font-semibold">📍 ${r.location}</span></div>
+                        <div class="text-slate-400">${r.timestamp}</div>
+                    </div>
+                    <span class="shrink-0 px-2.5 py-1 rounded-lg font-bold ${isGraded(r) ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}">
+                        ${isGraded(r) ? 'ตรวจแล้ว' + (hasScore(r) ? ` (${r.score})` : '') : 'รอตรวจ'}
+                    </span>
+                </div>
+            `).join('');
         }
 
         // ---------- ส่งออก CSV ----------
