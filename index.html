@@ -630,6 +630,15 @@
             btn.innerText = '🚀 ส่งรายงานการทำเวรเรียบร้อย';
         }
 
+        // ---------- ตรวจสถานะ "ตรวจแล้ว" แบบยืดหยุ่น ----------
+        function hasScore(r) {
+            const v = r.score;
+            return v !== undefined && v !== null && String(v).trim() !== '' && String(v).trim() !== '-';
+        }
+        function isGraded(r) {
+            return String(r.inspectionStatus || '').includes('ตรวจแล้ว') || hasScore(r);
+        }
+
         async function loadStudentReports() {
             const list = document.getElementById('studentReportsList');
             const res = await apiCall('getStudentReports');
@@ -646,13 +655,13 @@
                                 <div class="text-xs text-slate-400 mt-0.5">${r.timestamp} • ${r.status}</div>
                             </div>
                             <div>
-                                <span class="px-3 py-1.5 rounded-xl text-xs font-bold ${r.inspectionStatus === 'ตรวจแล้ว' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}">
-                                    ${r.inspectionStatus} ${r.score !== '-' ? `(${r.score} คะแนน)` : ''}
+                                <span class="px-3 py-1.5 rounded-xl text-xs font-bold ${isGraded(r) ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}">
+                                    ${isGraded(r) ? 'ตรวจแล้ว' : (r.inspectionStatus || 'รอตรวจ')} ${hasScore(r) ? `(${r.score} คะแนน)` : ''}
                                 </span>
                             </div>
                         </div>
 
-                        ${r.inspectionStatus === 'ตรวจแล้ว' ? `
+                        ${isGraded(r) ? `
                             <div class="mt-2 pt-2 border-t border-rose-100/70 text-xs bg-rose-50/60 p-3 rounded-xl border border-rose-100">
                                 <span class="font-bold text-rose-700">💬 คุณครูผู้ตรวจ (${r.teacherName || 'ครูประจำการ'}):</span>
                                 <p class="text-slate-600 mt-1 italic">${r.feedback && r.feedback !== '-' ? `"${r.feedback}"` : 'ไม่มีข้อคิดเห็นเพิ่มเติม'}</p>
@@ -799,12 +808,16 @@
         async function submitGrade(id) {
             const score = document.getElementById(`score_${id}`).value;
             const feedback = document.getElementById(`feedback_${id}`).value;
-            if (!score) return alert('กรุณาใส่คะแนนก่อนนะคะ');
+            if (score === '') return alert('กรุณาใส่คะแนนก่อนนะคะ');
+            if (+score < 0 || +score > 10) return alert('คะแนนต้องอยู่ระหว่าง 0-10 ค่ะ');
 
             const res = await apiCall('gradeReport', { id, score, feedback, teacherName: loggedInTeacher });
             if (res.success) {
                 alert('ให้คะแนนเรียบร้อยค่ะ ✨');
                 loadPendingReports();
+                loadStudentReports();
+            } else {
+                alert('บันทึกคะแนนไม่สำเร็จ: ' + (res.error || 'เซิร์ฟเวอร์ไม่ตอบกลับ ลองใหม่อีกครั้งค่ะ'));
             }
         }
 
@@ -869,32 +882,48 @@
             }
         }
 
-        // ---------- แปลงวันที่จาก timestamp (รองรับ dd/mm/yyyy, yyyy-mm-dd และปี พ.ศ.) ----------
+        // ---------- แปลงวันที่จาก timestamp เป็น yyyy-mm-dd (เวลาเครื่อง) ----------
+        function ymd(d) {
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
         function parseReportDate(ts) {
-            const str = String(ts || '');
-            let d, m, y;
-            let mt = str.match(/(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
+            if (ts instanceof Date) return ymd(ts);
+            const str = String(ts || '').trim();
+            if (!str) return null;
+            let d, m, y, mt;
+
+            // ISO มีเขตเวลา เช่น 2026-10-05T03:00:00.000Z -> แปลงเป็นเวลาท้องถิ่น
+            if (/^\d{4}-\d{2}-\d{2}T.*(Z|[+-]\d{2}:?\d{2})$/.test(str)) {
+                const dt = new Date(str);
+                if (!isNaN(dt)) return ymd(dt);
+            }
+            mt = str.match(/(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
             if (mt) { y = +mt[1]; m = +mt[2]; d = +mt[3]; }
             else {
                 mt = str.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
-                if (!mt) return null;
-                d = +mt[1]; m = +mt[2]; y = +mt[3];
+                if (mt) { d = +mt[1]; m = +mt[2]; y = +mt[3]; }
+                else {
+                    const dt = new Date(str);
+                    return isNaN(dt) ? null : ymd(dt);
+                }
             }
             if (y > 2400) y -= 543;
             return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         }
 
+        function normLoc(v) { return String(v || '').replace(/\s+/g, ' ').trim(); }
+
         function renderMissingLocations(locations) {
-            const now = new Date();
-            const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-            const reported = new Set(
-                adminReports.filter(r => parseReportDate(r.timestamp) === today).map(r => r.location)
-            );
-            const missing = locations.filter(l => !reported.has(l));
+            const today = ymd(new Date());
+            const todayReports = adminReports.filter(r => parseReportDate(r.timestamp) === today);
+            const reported = new Set(todayReports.map(r => normLoc(r.location)));
+            const missing = locations.filter(l => !reported.has(normLoc(l)));
             const box = document.getElementById('missingLocationList');
 
-            document.getElementById('missingSummary').innerText =
-                `ส่งแล้ว ${locations.length - missing.length} / ${locations.length} จุด`;
+            const sample = adminReports[0] ? String(adminReports[0].timestamp) : '-';
+            document.getElementById('missingSummary').innerHTML =
+                `ส่งแล้ว ${locations.length - missing.length} / ${locations.length} จุด ` +
+                `<span class="block text-xs text-slate-400 font-normal mt-1">รายงานวันนี้ ${todayReports.length} รายการ จากทั้งหมด ${adminReports.length} • ตัวอย่างวันที่ในระบบ: ${sample}</span>`;
 
             if (locations.length === 0) {
                 box.innerHTML = '<p class="text-sm text-rose-300 py-2">ยังไม่มีจุดประจำเวรในระบบ</p>';
@@ -914,7 +943,7 @@
             const header = ['วันเวลา', 'ชื่อนักเรียน', 'จุดประจำเวร', 'สถานะการมาทำเวร', 'ผู้ขาดเวร', 'สถานะการตรวจ', 'คะแนน', 'ครูผู้ตรวจ', 'ความคิดเห็น', 'ลิงก์รูป'];
             const rows = adminReports.map(r => [
                 r.timestamp, r.studentName, r.location, r.status, r.absentDetails,
-                r.inspectionStatus, r.score, r.teacherName, r.feedback, r.photoUrl
+                (isGraded(r) ? 'ตรวจแล้ว' : (r.inspectionStatus || 'รอตรวจ')), r.score, r.teacherName, r.feedback, r.photoUrl
             ].map(esc).join(','));
             const csv = '\uFEFF' + [header.map(esc).join(','), ...rows].join('\r\n');
             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
