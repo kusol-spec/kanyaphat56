@@ -257,31 +257,30 @@
 
             <!-- Admin Dashboard Content -->
             <div id="adminDashboard" class="hidden space-y-6">
-                <!-- Analytics Card -->
+                <!-- Missing locations today -->
                 <div class="glass-pink p-6 sm:p-8 rounded-3xl cute-shadow">
-                    <div class="flex justify-between items-center mb-6">
+                    <div class="flex justify-between items-center mb-5">
                         <div>
-                            <h2 class="text-xl font-bold text-slate-800 flex items-center gap-2">🏆 สถิติจุดประจำเวรที่มีการทำเวรมากที่สุด</h2>
-                            <p class="text-xs text-rose-400 mt-1">สรุปอันดับจุดที่มีการส่งรายงานเวรเข้ามามากที่สุดในโรงเรียน</p>
+                            <h2 class="text-xl font-bold text-slate-800 flex items-center gap-2">📌 จุดที่ยังไม่ส่งรายงานวันนี้</h2>
+                            <p class="text-xs text-rose-400 mt-1">ใช้ติดตามว่าจุดประจำเวรไหนยังไม่มีใครส่งรายงานของวันนี้</p>
                         </div>
                         <button onclick="loadAdminData()" class="text-xs bg-rose-100 hover:bg-rose-200 text-rose-700 px-3 py-1.5 rounded-xl font-medium">🔄 อัปเดต</button>
                     </div>
-                    <div id="locationStatsList" class="space-y-3">
-                        <p class="text-sm text-rose-300 text-center py-4">กำลังคำนวณสถิติ...</p>
+                    <div id="missingSummary" class="text-sm font-bold text-rose-600 mb-3"></div>
+                    <div id="missingLocationList" class="flex flex-wrap gap-2">
+                        <p class="text-sm text-rose-300 py-2">กำลังโหลด...</p>
                     </div>
                 </div>
 
-                <!-- Admin Manage Reports -->
+                <!-- Export -->
                 <div class="glass-pink p-6 sm:p-8 rounded-3xl cute-shadow">
-                    <div class="flex justify-between items-center mb-6 border-b border-rose-100 pb-4">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div>
-                            <h2 class="text-xl font-bold text-slate-800 flex items-center gap-2">🗑️ จัดการและล้างประวัติรายงาน</h2>
-                            <p class="text-xs text-rose-400 mt-1">สามารถลบรายงานทีละรายการ หรือล้างข้อมูลทั้งหมดได้</p>
+                            <h2 class="text-xl font-bold text-slate-800 flex items-center gap-2">📥 ส่งออกรายงาน</h2>
+                            <p class="text-xs text-rose-400 mt-1">ดาวน์โหลดรายงานทั้งหมดเป็นไฟล์ CSV เปิดด้วย Excel / Google Sheets ได้ เก็บเป็นหลักฐานหรือส่งต่อได้</p>
+                            <p id="exportCount" class="text-xs text-slate-400 mt-1"></p>
                         </div>
-                        <button onclick="handleClearAllReports()" class="bg-rose-500 hover:bg-rose-600 text-white text-xs px-4 py-2 rounded-xl font-bold shadow-md transition">⚠️ ล้างประวัติทั้งหมด</button>
-                    </div>
-                    <div id="adminReportManagerList" class="space-y-3 max-h-80 overflow-y-auto pr-1">
-                        <p class="text-sm text-rose-300 text-center py-4">กำลังโหลดรายงาน...</p>
+                        <button onclick="exportReportsCSV()" class="pink-btn-gradient text-white px-6 py-3 rounded-xl text-sm font-bold shadow-md hover:opacity-95 whitespace-nowrap">⬇️ ดาวน์โหลด CSV</button>
                     </div>
                 </div>
 
@@ -353,6 +352,7 @@
         let selectedAbsent = new Set();
         let teacherCreds = null;
         let moveSelected = new Set();
+        let adminReports = [];
 
         // ---------- CSV / Sheet ----------
         function parseCSV(text) {
@@ -863,90 +863,68 @@
                     </li>
                 `).join('');
 
-                // Render Location Statistics & Manage Reports
-                if (res.allReports) {
-                    const counts = {};
-                    res.locations.forEach(loc => counts[loc] = 0);
-
-                    res.allReports.forEach(r => {
-                        if (counts[r.location] !== undefined) {
-                            counts[r.location]++;
-                        } else if (r.location) {
-                            counts[r.location] = 1;
-                        }
-                    });
-
-                    const sortedStats = Object.keys(counts)
-                        .map(loc => ({ location: loc, count: counts[loc] }))
-                        .sort((a, b) => b.count - a.count);
-
-                    const totalReports = res.allReports.length || 1;
-                    const statsContainer = document.getElementById('locationStatsList');
-
-                    if (sortedStats.length === 0) {
-                        statsContainer.innerHTML = '<p class="text-sm text-rose-300 text-center py-4">ยังไม่มีข้อมูลสถิติค่ะ</p>';
-                    } else {
-                        statsContainer.innerHTML = sortedStats.map((item, index) => {
-                            const percentage = Math.round((item.count / totalReports) * 100);
-                            const isTop = index === 0 && item.count > 0;
-
-                            return `
-                                <div class="p-4 bg-white rounded-2xl border border-rose-100 space-y-2 shadow-sm">
-                                    <div class="flex justify-between items-center">
-                                        <div class="flex items-center gap-2">
-                                            <span class="w-6 h-6 rounded-lg ${isTop ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'} text-xs font-bold flex items-center justify-center">
-                                                #${index + 1}
-                                            </span>
-                                            <span class="font-bold text-slate-800 text-sm">📍 ${item.location}</span>
-                                            ${isTop ? '<span class="text-xs bg-rose-100 text-rose-600 font-bold px-2 py-0.5 rounded-full border border-rose-200">🏆 ขยันทำที่สุด</span>' : ''}
-                                        </div>
-                                        <span class="text-sm font-bold text-rose-500">${item.count} ครั้ง <span class="text-xs text-slate-400 font-normal">(${percentage}%)</span></span>
-                                    </div>
-                                    <div class="w-full bg-rose-100/60 h-2.5 rounded-full overflow-hidden">
-                                        <div class="pink-btn-gradient h-full rounded-full transition-all duration-500" style="width: ${percentage}%"></div>
-                                    </div>
-                                </div>
-                            `;
-                        }).join('');
-                    }
-
-                    // Render List of Reports in Admin for Deleting
-                    const adminReportList = document.getElementById('adminReportManagerList');
-                    if (res.allReports.length === 0) {
-                        adminReportList.innerHTML = '<p class="text-sm text-rose-300 text-center py-4">ไม่มีรายการรายงานในระบบ</p>';
-                    } else {
-                        adminReportList.innerHTML = res.allReports.map(r => `
-                            <div class="flex justify-between items-center p-3 bg-white rounded-xl border border-rose-100 text-xs">
-                                <div>
-                                    <span class="font-bold text-slate-800">${r.studentName}</span>
-                                    <span class="text-rose-500 font-semibold"> (📍 ${r.location})</span>
-                                    <div class="text-slate-400">${r.timestamp} • ${r.inspectionStatus}</div>
-                                </div>
-                                <button onclick="handleDeleteSingleReport('${r.id}')" class="text-rose-500 hover:text-rose-700 font-bold px-2 py-1 bg-rose-50 rounded-lg">ลบรายการนี้</button>
-                            </div>
-                        `).join('');
-                    }
-                }
+                adminReports = res.allReports || [];
+                renderMissingLocations(res.locations || []);
+                document.getElementById('exportCount').innerText = `มีรายงานในระบบ ${adminReports.length} รายการ`;
             }
         }
 
-        async function handleDeleteSingleReport(id) {
-            if (!confirm('ยืนยันลบรายงานรายการนี้?')) return;
-            const res = await apiCall('deleteSingleReport', { id });
-            if (res.success) {
-                loadAdminData();
-                loadStudentReports();
+        // ---------- แปลงวันที่จาก timestamp (รองรับ dd/mm/yyyy, yyyy-mm-dd และปี พ.ศ.) ----------
+        function parseReportDate(ts) {
+            const str = String(ts || '');
+            let d, m, y;
+            let mt = str.match(/(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
+            if (mt) { y = +mt[1]; m = +mt[2]; d = +mt[3]; }
+            else {
+                mt = str.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
+                if (!mt) return null;
+                d = +mt[1]; m = +mt[2]; y = +mt[3];
+            }
+            if (y > 2400) y -= 543;
+            return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        }
+
+        function renderMissingLocations(locations) {
+            const now = new Date();
+            const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+            const reported = new Set(
+                adminReports.filter(r => parseReportDate(r.timestamp) === today).map(r => r.location)
+            );
+            const missing = locations.filter(l => !reported.has(l));
+            const box = document.getElementById('missingLocationList');
+
+            document.getElementById('missingSummary').innerText =
+                `ส่งแล้ว ${locations.length - missing.length} / ${locations.length} จุด`;
+
+            if (locations.length === 0) {
+                box.innerHTML = '<p class="text-sm text-rose-300 py-2">ยังไม่มีจุดประจำเวรในระบบ</p>';
+            } else if (missing.length === 0) {
+                box.innerHTML = '<p class="text-sm text-emerald-600 font-bold py-2">ทุกจุดส่งรายงานวันนี้ครบแล้วค่ะ 🎉</p>';
+            } else {
+                box.innerHTML = missing.map(l =>
+                    `<span class="text-sm bg-white border border-rose-200 text-rose-700 font-semibold px-3 py-1.5 rounded-xl shadow-sm">📍 ${l}</span>`
+                ).join('');
             }
         }
 
-        async function handleClearAllReports() {
-            if (!confirm('⚠️ คำเตือน: คุณต้องการล้างประวัติการส่งรายงานทั้งหมดใช่หรือไม่? ข้อมูลทั้งหมดจะถูกลบออกจากระบบ!')) return;
-            const res = await apiCall('clearAllReports');
-            if (res.success) {
-                alert('ล้างประวัติรายงานทั้งหมดเรียบร้อยแล้วค่ะ');
-                loadAdminData();
-                loadStudentReports();
-            }
+        // ---------- ส่งออก CSV ----------
+        function exportReportsCSV() {
+            if (!adminReports.length) return alert('ยังไม่มีรายงานให้ส่งออกค่ะ');
+            const esc = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+            const header = ['วันเวลา', 'ชื่อนักเรียน', 'จุดประจำเวร', 'สถานะการมาทำเวร', 'ผู้ขาดเวร', 'สถานะการตรวจ', 'คะแนน', 'ครูผู้ตรวจ', 'ความคิดเห็น', 'ลิงก์รูป'];
+            const rows = adminReports.map(r => [
+                r.timestamp, r.studentName, r.location, r.status, r.absentDetails,
+                r.inspectionStatus, r.score, r.teacherName, r.feedback, r.photoUrl
+            ].map(esc).join(','));
+            const csv = '\uFEFF' + [header.map(esc).join(','), ...rows].join('\r\n');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `รายงานเวร_${new Date().toISOString().slice(0, 10)}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(a.href);
         }
 
         async function handleAddLocation() {
