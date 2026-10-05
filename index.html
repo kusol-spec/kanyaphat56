@@ -643,7 +643,9 @@
                     colors: ['#ff758c', '#ff7eb3', '#fda085', '#ffffff']
                 });
 
-                alert('ส่งรายงานเรียบร้อยแล้วค่ะ ขอบคุณที่ช่วยดูแลโรงเรียนนะคะ 💖');
+                alert(res.photoOk === false
+                    ? 'บันทึกรายงานแล้ว แต่รูปบันทึกไม่สำเร็จ กรุณาแจ้งผู้ดูแลระบบให้ตรวจสิทธิ์ Drive ค่ะ'
+                    : 'ส่งรายงานเรียบร้อยแล้วค่ะ ขอบคุณที่ช่วยดูแลโรงเรียนนะคะ 💖');
                 document.getElementById('studentForm').reset();
                 toggleAbsentDetails(false);
                 selectedAbsent.clear();
