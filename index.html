@@ -257,17 +257,25 @@
 
             <!-- Admin Dashboard Content -->
             <div id="adminDashboard" class="hidden space-y-6">
-                <!-- Recent reports (read-only) -->
+                <!-- Reports table (like the sheet) -->
                 <div class="glass-pink p-6 sm:p-8 rounded-3xl cute-shadow">
-                    <div class="flex justify-between items-center mb-4">
+                    <div class="flex justify-between items-start mb-4 gap-3">
                         <div>
                             <h2 class="text-xl font-bold text-slate-800 flex items-center gap-2">📋 รายงานที่ส่งเข้ามา</h2>
                             <p id="reportSummary" class="text-xs text-rose-400 mt-1">กำลังโหลด...</p>
                         </div>
-                        <button onclick="loadAdminData()" class="text-xs bg-rose-100 hover:bg-rose-200 text-rose-700 px-3 py-1.5 rounded-xl font-medium">🔄 อัปเดต</button>
+                        <button onclick="loadAdminData()" class="text-xs bg-rose-100 hover:bg-rose-200 text-rose-700 px-3 py-1.5 rounded-xl font-medium shrink-0">🔄 อัปเดต</button>
                     </div>
-                    <div id="recentReportsList" class="space-y-2 max-h-96 overflow-y-auto pr-1">
-                        <p class="text-sm text-rose-300 text-center py-4">กำลังโหลด...</p>
+                    <div class="grid sm:grid-cols-3 gap-2 mb-3">
+                        <input type="text" id="reportSearch" oninput="renderRecentReports()" placeholder="🔍 ค้นหาชื่อ / จุด..." class="sm:col-span-2 p-3 bg-white border border-rose-300 rounded-xl text-sm focus:ring-2 focus:ring-rose-400 focus:outline-none">
+                        <select id="reportStatusFilter" onchange="renderRecentReports()" class="p-3 bg-white border border-rose-300 rounded-xl text-sm focus:ring-2 focus:ring-rose-400 focus:outline-none">
+                            <option value="">ทุกสถานะ</option>
+                            <option value="pending">รอตรวจ</option>
+                            <option value="graded">ตรวจแล้ว</option>
+                        </select>
+                    </div>
+                    <div id="recentReportsList" class="overflow-auto max-h-[32rem] rounded-2xl border border-rose-100 bg-white">
+                        <p class="text-sm text-rose-300 text-center py-6">กำลังโหลด...</p>
                     </div>
                 </div>
 
@@ -334,6 +342,17 @@
         </section>
 
     </main>
+
+    <!-- Photo viewer -->
+    <div id="photoModal" class="hidden fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4" onclick="closePhoto()">
+        <div class="relative max-w-3xl w-full" onclick="event.stopPropagation()">
+            <img id="photoModalImg" src="" alt="รูปถ่ายการทำเวร" class="w-full max-h-[80vh] object-contain rounded-2xl bg-white">
+            <div class="flex justify-between mt-3">
+                <a id="photoModalLink" href="#" target="_blank" class="text-xs bg-white/90 text-rose-600 px-4 py-2 rounded-xl font-bold">เปิดรูปต้นฉบับ</a>
+                <button onclick="closePhoto()" class="text-xs bg-rose-500 text-white px-5 py-2 rounded-xl font-bold">ปิด</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbwBa210nAq49uJkemsJ1uxnD0KwcLFkd_wtXIH7I3GWEPcDL4oUv7PmqfVfZZeMCJAf/exec'; 
@@ -546,15 +565,23 @@
                     body: JSON.stringify({ action, ...data }),
                     signal: ctrl.signal
                 });
-                return await response.json();
+                const text = await response.text();
+                try {
+                    return JSON.parse(text);
+                } catch (e) {
+                    console.error('Non-JSON response', action, text.slice(0, 300));
+                    const plain = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+                    return { success: false, error: 'เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง: ' + (plain || 'ว่างเปล่า') };
+                }
             } catch (err) {
                 console.error(err);
+                const msg = err.name === 'AbortError' ? 'เซิร์ฟเวอร์ตอบช้าเกินไป' : 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ (' + (err.message || err) + ')';
                 if (!silent) {
                     alert(err.name === 'AbortError'
                         ? 'เซิร์ฟเวอร์ตอบช้าเกินไป ลองใหม่อีกครั้งนะคะ'
                         : 'เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์');
                 }
-                return { success: false };
+                return { success: false, error: msg };
             } finally {
                 clearTimeout(timer);
             }
@@ -638,44 +665,61 @@
             return String(r.inspectionStatus || '').includes('ตรวจแล้ว') || hasScore(r);
         }
 
-        async function loadStudentReports() {
+        function renderStudentReportList(reports, note) {
             const list = document.getElementById('studentReportsList');
-            const res = await apiCall('getStudentReports', {}, 60000, true);
-            if (!res.success || !Array.isArray(res.reports)) {
-                list.innerHTML = `<div class="text-center py-6 space-y-2">
-                    <p class="text-sm text-rose-400">โหลดประวัติไม่สำเร็จ${res.error ? ' (' + res.error + ')' : ''}</p>
-                    <button onclick="loadStudentReports()" class="text-xs bg-rose-100 hover:bg-rose-200 text-rose-700 px-4 py-2 rounded-xl font-bold">🔄 ลองใหม่</button>
-                </div>`;
+            if (!reports.length) {
+                list.innerHTML = '<p class="text-sm text-rose-300 text-center py-6">ยังไม่มีประวัติการส่งรายงานค่ะ</p>';
                 return;
             }
-            if (res.success && res.reports) {
-                if (res.reports.length === 0) {
-                    list.innerHTML = '<p class="text-sm text-rose-300 text-center py-6">ยังไม่มีประวัติการส่งรายงานค่ะ</p>';
-                    return;
-                }
-                list.innerHTML = res.reports.map(r => `
-                    <div class="p-4 bg-white/80 rounded-2xl border border-rose-100 space-y-2 hover:bg-rose-50/50 transition shadow-sm text-sm">
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <div class="font-bold text-slate-800">${r.studentName} <span class="text-rose-500 font-medium">📍 ${r.location}</span></div>
-                                <div class="text-xs text-slate-400 mt-0.5">${r.timestamp} • ${r.status}</div>
-                            </div>
-                            <div>
-                                <span class="px-3 py-1.5 rounded-xl text-xs font-bold ${isGraded(r) ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}">
-                                    ${isGraded(r) ? 'ตรวจแล้ว' : (r.inspectionStatus || 'รอตรวจ')} ${hasScore(r) ? `(${r.score} คะแนน)` : ''}
-                                </span>
-                            </div>
+            const dash = v => (v == null || String(v).trim() === '' || String(v).trim() === '-') ? '' : esc(v);
+            list.innerHTML = (note ? `<p class="text-xs text-slate-400 text-center">${note}</p>` : '') +
+                reports.map(r => `
+                <div class="p-4 bg-white/80 rounded-2xl border border-rose-100 space-y-2 hover:bg-rose-50/50 transition shadow-sm text-sm">
+                    <div class="flex justify-between items-start gap-2">
+                        <div>
+                            <div class="font-bold text-slate-800">${esc(r.studentName)} <span class="text-rose-500 font-medium">📍 ${esc(r.location)}</span></div>
+                            <div class="text-xs text-slate-400 mt-0.5">${esc(r.timestamp)}${dash(r.status) ? ' • ' + dash(r.status) : ''}</div>
                         </div>
-
-                        ${isGraded(r) ? `
-                            <div class="mt-2 pt-2 border-t border-rose-100/70 text-xs bg-rose-50/60 p-3 rounded-xl border border-rose-100">
-                                <span class="font-bold text-rose-700">💬 คุณครูผู้ตรวจ (${r.teacherName || 'ครูประจำการ'}):</span>
-                                <p class="text-slate-600 mt-1 italic">${r.feedback && r.feedback !== '-' ? `"${r.feedback}"` : 'ไม่มีข้อคิดเห็นเพิ่มเติม'}</p>
-                            </div>
-                        ` : ''}
+                        <span class="shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold ${isGraded(r) ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}">
+                            ${isGraded(r) ? 'ตรวจแล้ว' : 'รอตรวจ'} ${hasScore(r) ? `(${esc(r.score)} คะแนน)` : ''}
+                        </span>
                     </div>
-                `).join('');
+                    ${isGraded(r) ? `
+                        <div class="mt-2 pt-2 border-t border-rose-100/70 text-xs bg-rose-50/60 p-3 rounded-xl border border-rose-100">
+                            <span class="font-bold text-rose-700">💬 คุณครูผู้ตรวจ (${esc(r.teacherName && r.teacherName !== '-' ? r.teacherName : 'ครูประจำการ')}):</span>
+                            <p class="text-slate-600 mt-1 italic">${dash(r.feedback) ? `"${dash(r.feedback)}"` : 'ไม่มีข้อคิดเห็นเพิ่มเติม'}</p>
+                        </div>` : ''}
+                </div>`).join('');
+        }
+
+        async function loadStudentReports() {
+            const list = document.getElementById('studentReportsList');
+            list.innerHTML = '<p class="text-sm text-rose-300 text-center py-6">กำลังโหลดข้อมูล...</p>';
+
+            const res = await apiCall('getStudentReports', {}, 60000, true);
+            if (res.success && Array.isArray(res.reports)) {
+                renderStudentReportList(res.reports);
+                return;
             }
+
+            // สำรอง: ใช้ข้อมูลรายงานจาก getAdminOverview แทน
+            const alt = await apiCall('getAdminOverview', {}, 60000, true);
+            if (alt.success && Array.isArray(alt.allReports)) {
+                const sorted = alt.allReports
+                    .map((r, i) => ({ r, i, t: tsValue(r.timestamp) }))
+                    .sort((a, b) => (b.t - a.t) || (b.i - a.i))
+                    .slice(0, 30)
+                    .map(x => x.r);
+                renderStudentReportList(sorted, 'แสดง 30 รายการล่าสุด');
+                return;
+            }
+
+            const why = res.error || alt.error || 'ไม่ทราบสาเหตุ';
+            list.innerHTML = `<div class="text-center py-6 space-y-2">
+                <p class="text-sm text-rose-400">โหลดประวัติไม่สำเร็จ</p>
+                <p class="text-xs text-slate-400 break-words px-4">สาเหตุ: ${esc(why)}</p>
+                <button onclick="loadStudentReports()" class="text-xs bg-rose-100 hover:bg-rose-200 text-rose-700 px-4 py-2 rounded-xl font-bold">🔄 ลองใหม่</button>
+            </div>`;
         }
 
         async function handleTeacherLogin(e) {
@@ -818,7 +862,7 @@
                             <p class="text-xs text-slate-400 mt-1">${r.timestamp} • ${r.status}</p>
                             ${r.absentDetails && r.absentDetails !== '-' ? `<p class="text-xs text-rose-500 font-medium mt-1">ขาด: ${r.absentDetails}</p>` : ''}
                         </div>
-                        ${r.photoUrl ? `<a href="${r.photoUrl}" target="_blank" class="text-xs bg-rose-100 text-rose-600 px-3 py-1.5 rounded-xl font-bold hover:bg-rose-200 transition">🖼 ดูรูปถ่าย</a>` : ''}
+                        ${photoThumb(r.photoUrl, 'w-24 h-24')}
                     </div>
                     <div class="flex flex-col sm:flex-row gap-2 pt-3 border-t border-rose-100">
                         <input type="number" id="score_${r.id}" max="10" min="0" placeholder="คะแนน (0-10)" class="sm:w-32 p-2.5 bg-rose-50/30 border border-rose-200 rounded-xl text-sm focus:outline-none">
@@ -908,8 +952,79 @@
 
                 adminReports = res.allReports || [];
                 renderRecentReports();
+                fillPhotosFromSheet();
                 document.getElementById('exportCount').innerText = `มีรายงานในระบบ ${adminReports.length} รายการ`;
             }
+        }
+
+        function esc(v) {
+            return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+        function cell(v) {
+            const t = String(v == null ? '' : v).trim();
+            return t === '' || t === '-' ? '<span class="text-slate-300">-</span>' : esc(t);
+        }
+
+        // ---------- รูปภาพ ----------
+        function photoSrc(url, size = 400) {
+            const u = String(url || '').trim();
+            if (!/^https?:\/\//.test(u)) return '';
+            const m = u.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?(?:[^#]*&)?id=)([\w-]+)/);
+            if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w${size}`;
+            return u;
+        }
+        function photoThumb(url, cls = 'w-14 h-14') {
+            const src = photoSrc(url, 300);
+            if (!src) return '<span class="text-xs text-slate-300">ไม่มีรูป</span>';
+            return `<img src="${esc(src)}" loading="lazy" referrerpolicy="no-referrer"
+                onclick="openPhoto(decodeURIComponent('${encodeURIComponent(url)}'))"
+                onerror="this.replaceWith(document.createTextNode('โหลดรูปไม่ได้'))"
+                class="${cls} object-cover rounded-xl border border-rose-200 cursor-zoom-in hover:opacity-90 transition" alt="รูปถ่าย">`;
+        }
+        function openPhoto(url) {
+            document.getElementById('photoModalImg').src = photoSrc(url, 1200);
+            document.getElementById('photoModalLink').href = url;
+            document.getElementById('photoModal').classList.remove('hidden');
+        }
+        function closePhoto() {
+            document.getElementById('photoModal').classList.add('hidden');
+            document.getElementById('photoModalImg').src = '';
+        }
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closePhoto(); });
+
+        // ถ้า Apps Script ไม่ส่งลิงก์รูปมาใน getAdminOverview ให้ลองดึงจากชีท Reports ตรงๆ
+        async function fillPhotosFromSheet() {
+            if (!adminReports.length || adminReports.every(r => photoSrc(r.photoUrl))) return;
+            try {
+                const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('Reports')}`;
+                const r = await fetch(url);
+                if (!r.ok) return;
+                const text = await r.text();
+                if (text.trim().startsWith('<')) return;
+                const map = {};
+                parseCSV(text).forEach(row => {
+                    const id = String(row[0] || '').trim();
+                    const link = row.find(c => /^https?:\/\//.test(String(c).trim()));
+                    if (id && link) map[id] = link.trim();
+                });
+                let changed = false;
+                adminReports.forEach(rep => {
+                    if (!photoSrc(rep.photoUrl) && map[String(rep.id)]) { rep.photoUrl = map[String(rep.id)]; changed = true; }
+                });
+                if (changed) renderRecentReports();
+            } catch (e) { console.warn('อ่านรูปจากชีทไม่ได้', e); }
+        }
+
+        // ---------- เรียงใหม่ → เก่า ----------
+        function tsValue(ts) {
+            const str = String(ts || '');
+            const m = str.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})\D*(\d{1,2})?:?(\d{2})?/);
+            if (m) {
+                let y = +m[3]; if (y > 2400) y -= 543;
+                return new Date(y, +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0)).getTime();
+            }
+            const t = new Date(str).getTime();
+            return isNaN(t) ? -1 : t;
         }
 
         function renderRecentReports() {
@@ -917,30 +1032,81 @@
             const done = adminReports.filter(isGraded).length;
             document.getElementById('reportSummary').innerText =
                 `ทั้งหมด ${adminReports.length} รายการ • ตรวจแล้ว ${done} • รอตรวจ ${adminReports.length - done}`;
+
             if (!adminReports.length) {
-                box.innerHTML = '<p class="text-sm text-rose-300 text-center py-4">ยังไม่มีรายงานในระบบค่ะ</p>';
+                box.innerHTML = '<p class="text-sm text-rose-300 text-center py-6">ยังไม่มีรายงานในระบบค่ะ</p>';
                 return;
             }
-            box.innerHTML = adminReports.slice(0, 50).map(r => `
-                <div class="flex justify-between items-center gap-3 p-3 bg-white rounded-xl border border-rose-100 text-xs">
-                    <div class="min-w-0">
-                        <div class="font-bold text-slate-800 truncate">${r.studentName} <span class="text-rose-500 font-semibold">📍 ${r.location}</span></div>
-                        <div class="text-slate-400">${r.timestamp}</div>
-                    </div>
-                    <span class="shrink-0 px-2.5 py-1 rounded-lg font-bold ${isGraded(r) ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}">
-                        ${isGraded(r) ? 'ตรวจแล้ว' + (hasScore(r) ? ` (${r.score})` : '') : 'รอตรวจ'}
-                    </span>
-                </div>
-            `).join('');
+
+            const q = document.getElementById('reportSearch').value.trim().toLowerCase();
+            const st = document.getElementById('reportStatusFilter').value;
+            const rows = adminReports
+                .map((r, i) => ({ r, i, t: tsValue(r.timestamp) }))
+                .filter(x => (!st || (st === 'graded') === isGraded(x.r)) &&
+                    (!q || `${x.r.studentName} ${x.r.location}`.toLowerCase().includes(q)))
+                .sort((a, b) => (b.t - a.t) || (b.i - a.i));
+
+            const real = v => { const t = String(v == null ? '' : v).trim(); return t !== '' && t !== '-'; };
+            const hasClass = adminReports.some(r => real(r.classGrade));
+            const hasNo = adminReports.some(r => real(r.studentNo));
+            const LIMIT = 100;
+
+            if (!rows.length) {
+                box.innerHTML = '<p class="text-sm text-rose-300 text-center py-6">ไม่พบรายงานที่ตรงกับเงื่อนไขค่ะ</p>';
+                return;
+            }
+
+            const th = 'px-3 py-2.5 text-left font-bold text-rose-700 whitespace-nowrap bg-rose-50 sticky top-0';
+            const td = 'px-3 py-2.5 align-middle';
+            box.innerHTML = `
+                <table class="min-w-full text-xs">
+                    <thead>
+                        <tr>
+                            <th class="${th}">รูป</th>
+                            <th class="${th}">ชื่อ</th>
+                            ${hasClass ? `<th class="${th}">ชั้น</th>` : ''}
+                            ${hasNo ? `<th class="${th}">เลขที่</th>` : ''}
+                            <th class="${th}">จุดประจำเวร</th>
+                            <th class="${th}">สถานะ</th>
+                            <th class="${th}">ผู้ขาดเวร</th>
+                            <th class="${th}">เวลา</th>
+                            <th class="${th}">ผลตรวจ</th>
+                            <th class="${th}">ครู / ความเห็น</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-rose-100">
+                        ${rows.slice(0, LIMIT).map(({ r }) => `
+                            <tr class="hover:bg-rose-50/50">
+                                <td class="${td}">${photoThumb(r.photoUrl)}</td>
+                                <td class="${td} font-bold text-slate-800 whitespace-nowrap">${cell(r.studentName)}</td>
+                                ${hasClass ? `<td class="${td}">${cell(r.classGrade)}</td>` : ''}
+                                ${hasNo ? `<td class="${td}">${cell(r.studentNo)}</td>` : ''}
+                                <td class="${td} text-rose-600 font-semibold whitespace-nowrap">📍 ${cell(r.location)}</td>
+                                <td class="${td} whitespace-nowrap">${cell(r.status)}</td>
+                                <td class="${td} min-w-[8rem]">${cell(r.absentDetails)}</td>
+                                <td class="${td} text-slate-500 whitespace-nowrap">${cell(r.timestamp)}</td>
+                                <td class="${td} whitespace-nowrap">
+                                    <span class="px-2.5 py-1 rounded-lg font-bold ${isGraded(r) ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}">
+                                        ${isGraded(r) ? 'ตรวจแล้ว' + (hasScore(r) ? ` (${esc(r.score)})` : '') : 'รอตรวจ'}
+                                    </span>
+                                </td>
+                                <td class="${td} min-w-[9rem] text-slate-600">
+                                    ${real(r.teacherName) ? `<div class="font-semibold">${esc(r.teacherName)}</div>` : ''}
+                                    ${real(r.feedback) ? `<div class="text-slate-400">${esc(r.feedback)}</div>` : (real(r.teacherName) ? '' : '<span class="text-slate-300">-</span>')}
+                                </td>
+                            </tr>`).join('')}
+                    </tbody>
+                </table>
+                ${rows.length > LIMIT ? `<p class="text-xs text-slate-400 text-center py-3">แสดง ${LIMIT} จาก ${rows.length} รายการ ใช้ค้นหาเพื่อกรอง หรือดาวน์โหลด CSV เพื่อดูทั้งหมด</p>` : ''}`;
         }
 
         // ---------- ส่งออก CSV ----------
         function exportReportsCSV() {
             if (!adminReports.length) return alert('ยังไม่มีรายงานให้ส่งออกค่ะ');
             const esc = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-            const header = ['วันเวลา', 'ชื่อนักเรียน', 'จุดประจำเวร', 'สถานะการมาทำเวร', 'ผู้ขาดเวร', 'สถานะการตรวจ', 'คะแนน', 'ครูผู้ตรวจ', 'ความคิดเห็น', 'ลิงก์รูป'];
+            const header = ['รหัสรายงาน', 'ชั้น', 'เลขที่', 'วันเวลา', 'ชื่อนักเรียน', 'จุดประจำเวร', 'สถานะการมาทำเวร', 'ผู้ขาดเวร', 'สถานะการตรวจ', 'คะแนน', 'ครูผู้ตรวจ', 'ความคิดเห็น', 'ลิงก์รูป'];
             const rows = adminReports.map(r => [
-                r.timestamp, r.studentName, r.location, r.status, r.absentDetails,
+                r.id, r.classGrade, r.studentNo, r.timestamp, r.studentName, r.location, r.status, r.absentDetails,
                 (isGraded(r) ? 'ตรวจแล้ว' : (r.inspectionStatus || 'รอตรวจ')), r.score, r.teacherName, r.feedback, r.photoUrl
             ].map(esc).join(','));
             const csv = '\uFEFF' + [header.map(esc).join(','), ...rows].join('\r\n');
